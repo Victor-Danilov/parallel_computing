@@ -1,11 +1,3 @@
-#include <iostream>
-#include <mutex>
-#include <thread>
-#include <algorithm>
-#include <condition_variable>
-#include <iomanip>
-#include <vector>
-
 /*
    Array "lock" has operations
    - lock (int indexFrom, in indexTo)
@@ -18,70 +10,127 @@
    sorting an array values)
 */
 
-class LockArray{
-    private:
-        std::vector<std::mutex> locks;
-        std::vector<bool> isLocked;
-        std::mutex mtx;
-        std::condition_variable cv;
-    public:
+#include <iostream>
+#include <vector>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <algorithm>
 
-        LockArray(size_t size) : locks(size), isLocked(size, false){}
+template <typename T>
+class LockArray {
+private:
+    std::vector<T> data;               // The array elements
+    std::vector<bool> isLocked;        // Lock status of each element
+    std::mutex mtx;                    // Mutex for synchronization
+    std::condition_variable cv;        // Condition variable for waiting threads
 
-        // Lock Method
-        void lock(int indexFrom, int indexTo){
-            std::unique_lock<std::mutex> lock(mtx); // protext the state of isLocked
-            cv.wait(lock, [&](){
-                for(int i = indexFrom; i <= indexTo; ++i){
-                    if(isLocked[i]) return false; // if any element if locked, wait
+public:
+    // Constructor to initialize the array with given size and default value
+    LockArray(size_t size, T defaultValue = T()) : data(size, defaultValue), isLocked(size, false) {}
+
+    // Access element at index (without bounds checking)
+    T& operator[](size_t index) {
+        return data[index]; // Changed from data.at(index) to data[index]
+    }
+
+    const T& operator[](size_t index) const {
+        return data[index];
+    }
+
+    // Get the size of the array
+    size_t size() const {
+        return data.size();
+    }
+
+    // Provide begin() and end() functions to get iterators
+    typename std::vector<T>::iterator begin() {
+        return data.begin();
+    }
+
+    typename std::vector<T>::const_iterator begin() const {
+        return data.begin();
+    }
+
+    typename std::vector<T>::iterator end() {
+        return data.end();
+    }
+
+    typename std::vector<T>::const_iterator end() const {
+        return data.end();
+    }
+
+    // Lock method to lock elements from indexFrom to indexTo inclusive
+    void lock(int indexFrom, int indexTo) {
+        std::unique_lock<std::mutex> lock(mtx);
+
+        cv.wait(lock, [&]() {
+            for (int i = indexFrom; i <= indexTo; ++i) {
+                if (isLocked[i]) {
+                    return false;  
                 }
-                return false;
-            });
-
-            for(int i = indexFrom; i <= indexTo; ++i){
-                locks[i].lock();
+            }
+            // All elements are unlocked, proceed to lock them
+            for (int i = indexFrom; i <= indexTo; ++i) {
                 isLocked[i] = true;
             }
-        }
+            return true;
+        });
+    }
 
-
-        // Unlock Method
-        void unlock(int indexFrom, int indexTo){
-            std::unique_lock<std::mutex> lock(mtx); // protext the state of isLocked
-            for(int i = indexFrom; i <= indexTo; ++i){
-                locks[i].unlock();
+    // Unlock method to unlock elements from indexFrom to indexTo inclusive
+    void unlock(int indexFrom, int indexTo) {
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            for (int i = indexFrom; i <= indexTo; ++i) {
                 isLocked[i] = false;
             }
-            cv.notify_all(); // notify waiting threads that elements are unlockd
         }
+        cv.notify_all();  // Notify waiting threads that elements have been unlocked
+    }
 };
 
-void sortPartialArray(std::vector<int>& arr, LockArray& lockArray, int start, int end){
-    lockArray.lock(start, end); // lock the array range
-    std::sort(arr.begin() + start, arr.begin() + end +1); // sort the range
-    std::cout<<"Sorted section ["<<start<<", "<<end<<"] by thread.\n";
-    lockArray.unlock(start, end); // unlock the array range
+// Function for threads to sort a portion of the array
+void sortArraySection(LockArray<int>& lockArray, int indexFrom, int indexTo, int threadID) {
+    
+    lockArray.lock(indexFrom, indexTo);
+
+    std::sort(lockArray.begin() + indexFrom, lockArray.begin() + indexTo + 1);
+
+    std::cout << "Thread " << threadID << " sorted indices [" << indexFrom << ", " << indexTo << "].\n";
+
+    lockArray.unlock(indexFrom, indexTo);
 }
 
-int main(){
+int main() {
+    // Initialize LockArray with sample data
+    std::vector<int> initialData = {10, 3, 5, 8, 6, 2, 9, 7, 1, 4};
+    LockArray<int> lockArray(initialData.size());
+    for (size_t i = 0; i < initialData.size(); ++i) {
+        lockArray[i] = initialData[i];
+    }
 
-   const int arraySize = 10;
-   std::vector<int> arr = {10, 3, 5, 8, 6, 2, 9, 7, 1, 4};
+    // Display initial array
+    std::cout << "Initial Array: ";
+    for (size_t i = 0; i < lockArray.size(); ++i) {
+        std::cout << lockArray[i] << " ";
+    }
+    std::cout << "\n";
 
-   LockArray lockArray(arraySize);
+    // Create threads to sort different sections of the array
+    std::thread t1(sortArraySection, std::ref(lockArray), 0, 5, 1);  // Thread 1 sorts indices 0 to 5
+    std::thread t2(sortArraySection, std::ref(lockArray), 3, 9, 2);  // Thread 2 sorts indices 3 to 9
 
-    // Create two threads that sort different parts of the array
-    std::thread t1(sortPartialArray, std::ref(arr), std::ref(lockArray), 0, 4);  // Sort first half
-    std::thread t2(sortPartialArray, std::ref(arr), std::ref(lockArray), 5, 9);  // Sort second half
-
+    // Wait for threads to complete
     t1.join();
     t2.join();
 
-    // Output sorted array
+    // Display sorted array
     std::cout << "Sorted Array: ";
-    for (const auto& value : arr) {
-        std::cout << value << " ";
+    for (size_t i = 0; i < lockArray.size(); ++i) {
+        std::cout << lockArray[i] << " ";
     }
-    std::cout << std::endl;
+    std::cout << "\n";
+
     return 0;
 }
