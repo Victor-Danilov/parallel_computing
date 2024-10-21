@@ -1,3 +1,18 @@
+/*
+ * Date: 20/10/2024
+ * Author: Victor Danilov
+ *
+ * This program divides an array in segments
+ * which every segment is ordinated by a separate thread.
+ *
+ * Each thread blocks his segment to avoid conflicts with other threads
+ *
+ * When all the segments are in order, the array is blocked to ensore that the final result is correct.
+ *
+ * The output shows every process fase.
+ */
+
+
 #include <iostream>
 #include <vector>
 #include <thread>
